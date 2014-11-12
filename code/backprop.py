@@ -10,7 +10,7 @@ import sys
 import time
 
 import numpy as np
-
+from logistic_sgd import load_data
 
 
 # our sigmoid function, tanh is a little nicer than the standard 1/(1+e^-x)
@@ -49,7 +49,7 @@ class BackPropagation:
         # create biases
         self.nhb = np.asarray(rng.uniform(low=-np.sqrt(1. / (self.ni + self.nh)),high=np.sqrt(1. / (self.ni + self.nh)),size=(1,self.nh)), dtype=float)
         self.nob = np.asarray(rng.uniform(low=-np.sqrt(1. / (self.ni + self.nh)),high=np.sqrt(1. / (self.ni + self.nh)),size=(1,self.no)), dtype=float)
-
+        self.error = 0;
 
     def Forward(self, inputs):
         """
@@ -91,16 +91,20 @@ class BackPropagation:
         for j in range(self.nh):
             error = 0.0
             for k in range(self.no):
-                error += output_deltas[k]*self.wo[j][k]
+                error += output_deltas[:,k]*self.wo[j][k]
             hidden_deltas[j] = self.ah[:,j]*(1-self.ah[:,j])*error
 
         # update output weights and hidden weights
         for j in range(self.nh):
+        #    self.wo[j,:] = self.wo[j,:]+learning_rate_alpha*output_deltas*self.ah[:,j]
             for k in range(self.no):
-                self.wo[j][k] = self.wo[j][k] + learning_rate_alpha*output_deltas[k]*self.ah[:,j]
+                self.wo[j][k] = self.wo[j][k] + learning_rate_alpha*output_deltas[:,k]*self.ah[:,j]
+
+
         for i in range(self.ni):
+        #    self.wi[i,:] = self.wi[i,:]+learning_rate_beta*hidden_deltas*self.ai[:,i]
             for j in range(self.nh):
-                self.wi[i][j] = self.wi[i][j] + learning_rate_alpha*hidden_deltas[j]*self.ai[:,i]
+                self.wi[i][j] = self.wi[i][j] + learning_rate_alpha*hidden_deltas[j,:]*self.ai[:,i]
 
         #update output biases and hidden biases
         self.nhb = self.nhb + learning_rate_beta*hidden_deltas.T
@@ -111,11 +115,16 @@ class BackPropagation:
         return error
 
     def test(self, patterns):
+        """
+        temporal test code for demo development
+        :param patterns: test pattern
+        :return:
+        """
         for p in patterns:
-            print(p[0], '->', self.update(p[0]))
+            print(p[0], '->', self.Forward(p[0]))
 
 
-    def train(self, patterns, iterations=4000, learning_rate_alpha=0.4, learning_rate_beta=0.1):
+    def train(self, patterns_input,pattern_out, iterations=4000, learning_rate_alpha=0.4, learning_rate_beta=0.1):
         """
         :param patterns: train data set
         :param iterations: number of iterations using whole train data
@@ -127,30 +136,101 @@ class BackPropagation:
         # learning rate beta - learning rate for bias
         for i in range(iterations):
             error = 0.0
-            for p in patterns:
-                inputs = p[0]
-                targets = p[1]
-                self.Forward(inputs)
-                error +=  self.Backward(targets, learning_rate_alpha, learning_rate_beta)
+            for p_in,l_in in zip(patterns_input,pattern_out):
+                label = mnist_binary_label(l_in)
+                self.Forward(p_in)
+                error +=  self.Backward(label, learning_rate_alpha, learning_rate_beta)
             if i % 100 == 0:
                 print('error %-.5f' % error)
 
 
-def demo():
+def local_load_data(dataset):
+    ''' Loads the dataset
+
+    :type dataset: string
+    :param dataset: the path to the dataset (here MNIST)
+    '''
+
+    #############
+    # LOAD DATA #
+    #############
+
+    # Download the MNIST dataset if it is not present
+    data_dir, data_file = os.path.split(dataset)
+    if data_dir == "" and not os.path.isfile(dataset):
+        # Check if dataset is in the data directory.
+        new_path = os.path.join(os.path.split(__file__)[0], "..", "data", dataset)
+        if os.path.isfile(new_path) or data_file == 'mnist.pkl.gz':
+            dataset = new_path
+
+    if (not os.path.isfile(dataset)) and data_file == 'mnist.pkl.gz':
+        import urllib
+        origin = 'http://www.iro.umontreal.ca/~lisa/deep/data/mnist/mnist.pkl.gz'
+        print 'Downloading data from %s' % origin
+        urllib.urlretrieve(origin, dataset)
+
+    print '... loading data'
+
+    # Load the dataset
+    f = gzip.open(dataset, 'rb')
+    train_set, valid_set, test_set = cPickle.load(f)
+    f.close()
+    #train_set, valid_set, test_set format: tuple(input, target)
+    #input is an numpy.ndarray of 2 dimensions (a matrix)
+    #witch row's correspond to an example. target is a
+    #numpy.ndarray of 1 dimensions (vector)) that have the same length as
+    #the number of rows in the input. It should give the target
+    #target to the example with the same index in the input.
+    return test_set,valid_set,test_set
+
+def mnist_binary_label(label_integer):
+    if label_integer==0:
+        return [1,0,0,0,0,0,0,0,0,0]
+    elif label_integer==1:
+        return [0,1,0,0,0,0,0,0,0,0]
+    elif label_integer==2:
+        return [0,0,1,0,0,0,0,0,0,0]
+    elif label_integer==3:
+        return [0,0,0,1,0,0,0,0,0,0]
+    elif label_integer==4:
+        return [0,0,0,0,1,0,0,0,0,0]
+    elif label_integer==5:
+        return [0,0,0,0,0,1,0,0,0,0]
+    elif label_integer==6:
+        return [0,0,0,0,0,0,1,0,0,0]
+    elif label_integer==7:
+        return [0,0,0,0,0,0,0,1,0,0]
+    elif label_integer==8:
+        return [0,0,0,0,0,0,0,0,1,0]
+    elif label_integer==9:
+        return [0,0,0,0,0,0,0,0,0,1]
+    else:
+        return [0,0,0,0,0,0,0,0,0,0]
+
+
+
+
+def test_bp(n_epochs=1000,dataset='mnist.pkl.gz',n_hidden=500,batch_size=600,batch_num = 10 ):
     # Teach network XOR function
-
+    train_dataset, valid_dataset,test_dataset = local_load_data(dataset)
     rng = np.random.RandomState(1234)
-    pat = [[[0.0,0.0],[0.0]],
-        [[0.0,1.0],[1.0]],
-       [[1.0,0.0],[1.0]],
-        [[1.0,1.0],[0.0]]]
-
+    n_input = 28*28;
+    n_output = 10
     # create a network with two input, two hidden, and one output nodes
-    n = BackPropagation(rng, 2, 5, 1)
-    # train it with some patterns
-    n.train(pat)
-    # test it
-    n.test(pat)
+    ann_BP = BackPropagation(rng, n_input, n_hidden, n_output)
+
+    done_looping = False
+    epoch = 0
+    test_score = 0.
+    start_time = time.clock()
+
+    while (epoch < n_epochs) and (not done_looping):
+        epoch = epoch + 1
+        ann_BP.train(train_dataset[0][0:batch_size],train_dataset[1][0:batch_size])
+
+
+
+    end_time = time.clock()
 
 if __name__ == '__main__':
-    demo()
+    test_bp()
