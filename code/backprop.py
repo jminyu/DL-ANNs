@@ -49,7 +49,6 @@ class BackPropagation:
         # create biases
         self.nhb = np.asarray(rng.uniform(low=-np.sqrt(1. / (self.ni + self.nh)),high=np.sqrt(1. / (self.ni + self.nh)),size=(1,self.nh)), dtype=float)
         self.nob = np.asarray(rng.uniform(low=-np.sqrt(1. / (self.ni + self.nh)),high=np.sqrt(1. / (self.ni + self.nh)),size=(1,self.no)), dtype=float)
-        self.error = 0;
 
     def Forward(self, inputs):
         """
@@ -92,7 +91,7 @@ class BackPropagation:
             error = 0.0
             for k in range(self.no):
                 error += output_deltas[:,k]*self.wo[j][k]
-            hidden_deltas[j] = self.ah[:,j]*(1-self.ah[:,j])*error
+            hidden_deltas[j,:] = self.ah[:,j]*(1-self.ah[:,j])*error
 
         # update output weights and hidden weights
         for j in range(self.nh):
@@ -108,7 +107,7 @@ class BackPropagation:
 
         #update output biases and hidden biases
         self.nhb = self.nhb + learning_rate_beta*hidden_deltas.T
-        self.nob = self.nob + learning_rate_beta*output_deltas.T
+        self.nob = self.nob + learning_rate_beta*output_deltas
 
         # mean square error
         error = np.sum(0.5*(targets-self.ao)**2)
