@@ -10,7 +10,6 @@ import sys
 import time
 
 import numpy as np
-from logistic_sgd import load_data
 
 
 # our sigmoid function, tanh is a little nicer than the standard 1/(1+e^-x)
@@ -123,7 +122,7 @@ class BackPropagation:
             print(p[0], '->', self.Forward(p[0]))
 
 
-    def train(self, patterns_input,pattern_out, iterations=4000, learning_rate_alpha=0.4, learning_rate_beta=0.1):
+    def train(self, patterns_input,pattern_out, learning_rate_alpha=0.4, learning_rate_beta=0.1):
         """
         :param patterns: train data set
         :param iterations: number of iterations using whole train data
@@ -133,14 +132,12 @@ class BackPropagation:
         """
         # learning rate alpha - learning rate for weight
         # learning rate beta - learning rate for bias
-        for i in range(iterations):
-            error = 0.0
-            for p_in,l_in in zip(patterns_input,pattern_out):
-                label = mnist_binary_label(l_in)
-                self.Forward(p_in)
-                error +=  self.Backward(label, learning_rate_alpha, learning_rate_beta)
-            if i % 100 == 0:
-                print('error %-.5f' % error)
+        error = 0.0
+        for p_in,l_in in zip(patterns_input,pattern_out):
+            label = mnist_binary_label(l_in)
+            self.Forward(p_in)
+            error +=  self.Backward(label, learning_rate_alpha, learning_rate_beta)
+        return error
 
 
 def local_load_data(dataset):
@@ -209,9 +206,10 @@ def mnist_binary_label(label_integer):
 
 
 
-def test_bp(n_epochs=1000,dataset='mnist.pkl.gz',n_hidden=500,batch_size=600,batch_num = 10 ):
+def test_bp(n_epochs=1000,dataset='mnist.pkl.gz',n_hidden=100,batch_num = 100, iteration = 100 ):
     # Teach network XOR function
     train_dataset, valid_dataset,test_dataset = local_load_data(dataset)
+    batch_size = np.shape(train_dataset)[1]/batch_num
     rng = np.random.RandomState(1234)
     n_input = 28*28;
     n_output = 10
@@ -220,16 +218,23 @@ def test_bp(n_epochs=1000,dataset='mnist.pkl.gz',n_hidden=500,batch_size=600,bat
 
     done_looping = False
     epoch = 0
-    test_score = 0.
     start_time = time.clock()
+    past_error = 0.
 
     while (epoch < n_epochs) and (not done_looping):
         epoch = epoch + 1
-        ann_BP.train(train_dataset[0][0:batch_size],train_dataset[1][0:batch_size])
-
-
+        for j in range(iteration):
+            temp_error = ann_BP.train(train_dataset[0][0:batch_size],train_dataset[1][0:batch_size])
+            if j==0:
+                past_error = temp_error
+            else:
+                print('epoch %i, iteration %i, error rate %f %%' % (epoch, j,temp_error))
+                if abs(temp_error-past_error) <= 0.001:
+                    done_looping = True
+                    break
 
     end_time = time.clock()
+    print 'The code run for %d epochs, with %f epochs/sec' % (epoch, 1. * epoch / (end_time - start_time))
 
 if __name__ == '__main__':
     test_bp()
