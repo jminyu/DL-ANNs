@@ -293,7 +293,6 @@ def test_mlp(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
     gparams = []
     for param in classifier.params:
         gparam = T.grad(cost, param)
-        print gparam.get_value()
         gparams.append(gparam)
 
     # specify how to update the parameters of the model as a list of

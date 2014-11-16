@@ -209,7 +209,9 @@ def mnist_binary_label(label_integer):
 def test_bp(n_epochs=1000,dataset='mnist.pkl.gz',n_hidden=100,batch_num = 100, iteration = 100 ):
     # Teach network XOR function
     train_dataset, valid_dataset,test_dataset = local_load_data(dataset)
-    batch_size = np.shape(train_dataset)[1]/batch_num
+    temp_size = 10000
+    #batch_size = np.shape(train_dataset)[1]/batch_num #this source line is not working in current System
+    batch_size = temp_size/batch_num
     rng = np.random.RandomState(1234)
     n_input = 28*28;
     n_output = 10
@@ -232,6 +234,7 @@ def test_bp(n_epochs=1000,dataset='mnist.pkl.gz',n_hidden=100,batch_num = 100, i
                 if abs(temp_error-past_error) <= 0.001:
                     done_looping = True
                     break
+		past_error = temp_error
 
     end_time = time.clock()
     print 'The code run for %d epochs, with %f epochs/sec' % (epoch, 1. * epoch / (end_time - start_time))

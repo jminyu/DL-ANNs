@@ -41,7 +41,7 @@ class GRBM(object):
                 low=-4*numpy.sqrt(6./(n_hidden+n_visible)),
                 high=4*numpy.sqrt(6./(n_hidden+n_visible)),
                 size=(n_visible,n_hidden)),
-                dtype=theano.config.flooatX)
+                dtype=theano.config.floatX)
             W = theano.shared(value=init_W,name='W',borrow=True)
 
         if hbias is None:
@@ -85,7 +85,8 @@ class GRBM(object):
         return  [pre_sigmoid_h1, h1_mean,h1_sample]
 
     def propdown(self,hid):
-        pre_sigmoid_activation = T.dot(hid,self.W)+self.vbias
+	pre_sigmoid_activation = T.dot(hid,self.W.T) + self.vbias
+        #pre_sigmoid_activation = T.dot(hid,self.W.T)+self.vbias
         return [pre_sigmoid_activation,T.nnet.sigmoid(pre_sigmoid_activation)]
 
 
@@ -98,7 +99,7 @@ class GRBM(object):
         :param h0_sample:
         :return:
         '''
-        pre_sigmoid_v1,v1_mean = rbm.propdown(h0_sample)
+        pre_sigmoid_v1,v1_mean = self.propdown(h0_sample)
         v1_sample = pre_sigmoid_v1
         return [pre_sigmoid_v1, v1_mean, v1_sample]
 
@@ -260,10 +261,10 @@ def test_grbm(learning_rate=0.1, training_epochs=15,
                                      borrow=True)
 
     grbm = GRBM(input=x, n_visible=28 * 28,
-              n_hidden=n_hidden, numpy_rng=rng, theano_rng=theano_rng)
+              n_hidden=n_hidden, np_rng=rng, theano_rng=theano_rng)
 
     # get the cost and the gradient corresponding to one step of CD-15
-    cost, updates = grbm.get_cost_updates(lr=learning_rate,
+    cost, updates = grbm.get_cost_updates(learning_rate=learning_rate,
                                          persistent=persistent_chain, k=15)
 
     #################################
@@ -361,5 +362,8 @@ def test_grbm(learning_rate=0.1, training_epochs=15,
         # construct image
 
     image = Image.fromarray(image_data)
-    image.save('samples.png')
+    image.save('grbm_samples.png')
     os.chdir('../')
+
+if __name__=='__main__':
+    test_grbm()
