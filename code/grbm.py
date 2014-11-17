@@ -1,21 +1,21 @@
-"""This tutorial introduces restricted boltzmann machines (RBM) using Theano.
+"""
+This tutorial introduces Gaussian Bernoulli restricted boltzmann machines (GRBM) using Theano.
 
 Boltzmann Machines (BMs) are a particular form of energy-based model which
-contain hidden variables. Gaussian Restricted Boltzmann Machines further restrict BMs
-to those without visible-visible and hidden-hidden connections using Gaussian distribution.
+contain hidden variables. Gaussian Bernoulli Restricted Boltzmann Machines further restrict BMs
+to those with real value procesing visible layer.
 """
 import cPickle
 import gzip
 import time
-from pip.commands.search import highest_version
-
+import pdb
 try:
     import PIL.Image as Image
 except ImportError:
     import Image
 
 import numpy
-import rbm
+
 import theano
 import theano.tensor as T
 import os
@@ -25,30 +25,73 @@ from theano.tensor.shared_randomstreams import RandomStreams
 from utils import tile_raster_images
 from logistic_sgd import load_data
 
+
 class GRBM(object):
-    def __init__(self,input=None, n_visible=784, n_hidden=500,W=None,hbias=None,vbias=None,np_rng = None,theano_rng = None):
+    """Restricted Boltzmann Machine (RBM)  """
+    def __init__(self, input=None, n_visible=784, n_hidden=500, \
+        W=None, hbias=None, vbias=None, numpy_rng=None,
+        theano_rng=None):
+        """
+        RBM constructor. Defines the parameters of the model along with
+        basic operations for inferring hidden from visible (and vice-versa),
+        as well as for performing CD updates.
+
+        :param input: None for standalone RBMs or symbolic variable if RBM is
+        part of a larger graph.
+
+        :param n_visible: number of visible units
+
+        :param n_hidden: number of hidden units
+
+        :param W: None for standalone RBMs or symbolic variable pointing to a
+        shared weight matrix in case RBM is part of a DBN network; in a DBN,
+        the weights are shared between RBMs and layers of a MLP
+
+        :param hbias: None for standalone RBMs or symbolic variable pointing
+        to a shared hidden units bias vector in case RBM is part of a
+        different network
+
+        :param vbias: None for standalone RBMs or a symbolic variable
+        pointing to a shared visible units bias
+        """
+
         self.n_visible = n_visible
         self.n_hidden = n_hidden
 
-        if np_rng is None:
-            np_rng = numpy.random.RandomState(1234)
+        if numpy_rng is None:
+            # create a number generator
+            numpy_rng = numpy.random.RandomState(1234)
 
         if theano_rng is None:
-            theano_rng = RandomStreams(np_rng.radint(2**30))
+            theano_rng = RandomStreams(numpy_rng.randint(2 ** 30))
 
         if W is None:
-            init_W = numpy.asarray(np_rng.uniform(
-                low=-4*numpy.sqrt(6./(n_hidden+n_visible)),
-                high=4*numpy.sqrt(6./(n_hidden+n_visible)),
-                size=(n_visible,n_hidden)),
-                dtype=theano.config.floatX)
-            W = theano.shared(value=init_W,name='W',borrow=True)
+            # W is initialized with `initial_W` which is uniformely
+            # sampled from -4*sqrt(6./(n_visible+n_hidden)) and
+            # 4*sqrt(6./(n_hidden+n_visible)) the output of uniform if
+            # converted using asarray to dtype theano.config.floatX so
+            # that the code is runable on GPU
+            initial_W = numpy.asarray(numpy_rng.uniform(
+                      low=-4 * numpy.sqrt(6. / (n_hidden + n_visible)),
+                      high=4 * numpy.sqrt(6. / (n_hidden + n_visible)),
+                      size=(n_visible, n_hidden)),
+                      dtype=theano.config.floatX)
+            # theano shared variables for weights and biases
+            W = theano.shared(value=initial_W, name='W', borrow=True)
 
         if hbias is None:
-            hbias = theano.shared(value=numpy.zeros(n_hidden,dtype=theano.config.floatX),name='hbias',borrow=True)
-        if vbias is None:
-            hbias = theano.shared(value=numpy.zeros(n_visible,dtype=theano.config.floatX),name='hbias',borrow=True)
+            # create shared variable for hidden units bias
+            hbias = theano.shared(value=numpy.zeros(n_hidden,
+                                                    dtype=theano.config.floatX),
+                                  name='hbias', borrow=True)
 
+        if vbias is None:
+            # create shared variable for visible units bias
+            vbias = theano.shared(value=numpy.zeros(n_visible,
+                                                    dtype=theano.config.floatX),
+                                  name='vbias', borrow=True)
+
+        # initialize input layer for standalone RBM or layer0 of DBN
         self.input = input
         if not input:
             self.input = T.matrix('input')
@@ -57,87 +100,94 @@ class GRBM(object):
         self.hbias = hbias
         self.vbias = vbias
         self.theano_rng = theano_rng
+        # **** WARNING: It is not a good idea to put things in this list
+        # other than shared variables created in this function.
+        self.params = [self.W, self.hbias, self.vbias]
 
-
-        self.params = [self.W,self.hbias, self.vbias]
-
-    def type(self):
-        return 'Gaussian Bernoulli RBM'
-
-    def free_energy_grbm(self,v_sample):
-        '''
-        Function to compute the free energy
-        :param v_sample: input vector
-        :return: free energy value
-        '''
+    def free_energy_grbm(self, v_sample):
+        ''' Function to compute the free energy '''
         wx_b = T.dot(v_sample,self.W)+self.hbias
         vbias_term = 0.5*T.dot((v_sample-self.vbias),(v_sample-self.vbias).T)
         hidden_term = T.sum(T.log(1+T.exp(wx_b)),axis=1)
         return -hidden_term-T.diagonal(vbias_term)
 
-    def propup(self,vis):
-        pre_sigmoid_activation = T.dot(vis,self.W)+self.hbias
-        return [pre_sigmoid_activation,T.nnet.sigmoid(pre_sigmoid_activation)]
+    def propup(self, vis):
+        '''This function propagates the visible units activation upwards to
+        the hidden units
 
-    def sample_h_given_v(self,v0_sample):
-        pre_sigmoid_h1,h1_mean = self.propup(v0_sample)
-        h1_sample = self.theano_rng.binomial(size=h1_mean.shape,n=1,p=h1_mean,dtype=theano.config.floatX)
-        return  [pre_sigmoid_h1, h1_mean,h1_sample]
+        Note that we return also the pre-sigmoid activation of the
+        layer. As it will turn out later, due to how Theano deals with
+        optimizations, this symbolic variable will be needed to write
+        down a more stable computational graph (see details in the
+        reconstruction cost function)
 
-    def propdown(self,hid):
-	pre_sigmoid_activation = T.dot(hid,self.W.T) + self.vbias
-        #pre_sigmoid_activation = T.dot(hid,self.W.T)+self.vbias
-        return [pre_sigmoid_activation,T.nnet.sigmoid(pre_sigmoid_activation)]
-
-
-    def sample_v_given_h_grbm(self,h0_sample):
         '''
-        This function inferes state of visible units given hidden unit
-        but a different between RBM and GRBM  is to get real values.
-        this function had needed a sampling prodecure(i.e. 1_sample = self.theano_rng.binomial(size=v1_mean.shape,n=1, p=v1_mean,dtype=theano.config.floatX)
-        but, it is dosen't needed.
-        :param h0_sample:
-        :return:
+        pre_sigmoid_activation = T.dot(vis, self.W) + self.hbias
+        return [pre_sigmoid_activation, T.nnet.sigmoid(pre_sigmoid_activation)]
+
+    def sample_h_given_v(self, v0_sample):
+        ''' This function infers state of hidden units given visible units '''
+        # compute the activation of the hidden units given a sample of
+        # the visibles
+        pre_sigmoid_h1, h1_mean = self.propup(v0_sample)
+        # get a sample of the hiddens given their activation
+        # Note that theano_rng.binomial returns a symbolic sample of dtype
+        # int64 by default. If we want to keep our computations in floatX
+        # for the GPU we need to specify to return the dtype floatX
+        h1_sample = self.theano_rng.binomial(size=h1_mean.shape,
+                                             n=1, p=h1_mean,
+                                             dtype=theano.config.floatX)
+        return [pre_sigmoid_h1, h1_mean, h1_sample]
+
+    def propdown(self, hid):
+        pre_sigmoid_activation = T.dot(hid, self.W.T) + self.vbias
+        return [pre_sigmoid_activation, T.nnet.sigmoid(pre_sigmoid_activation)]
+
+    def sample_v_given_h_grbm(self, h0_sample):
+        ''' This function infers state of visible units given hidden units
+        There is no normalize phase
         '''
-        pre_sigmoid_v1,v1_mean = self.propdown(h0_sample)
+        pre_sigmoid_v1, v1_mean = self.propdown(h0_sample)
         v1_sample = pre_sigmoid_v1
         return [pre_sigmoid_v1, v1_mean, v1_sample]
 
+    def gibbs_hvh(self, h0_sample):
+        ''' This function implements one step of Gibbs sampling,
+            starting from the hidden state'''
+        pre_sigmoid_v1, v1_mean, v1_sample = self.sample_v_given_h_grbm(h0_sample)
+        pre_sigmoid_h1, h1_mean, h1_sample = self.sample_h_given_v(v1_sample)
+        return [pre_sigmoid_v1, v1_mean, v1_sample,
+                pre_sigmoid_h1, h1_mean, h1_sample]
 
-    def gibbs_hvh(self,h0_sample):
-        '''
-        THis function implements one step of Gibbs Sampling.
-        starting from the hidden state
-        :param h0_sample:
-        :return:
-        '''
-        pre_sigmoid_v1,v1_mean,v1_sample = self.sample_v_given_h_grbm(h0_sample)
-        pre_sigmoid_h1,h1_mean,h1_sample = self.sample_h_given_v(v1_sample)
-        return [pre_sigmoid_v1,v1_mean,v1_sample,pre_sigmoid_h1,h1_mean,h1_sample]
+    def gibbs_vhv(self, v0_sample):
+        ''' This function implements one step of Gibbs sampling,
+            starting from the visible state'''
+        pre_sigmoid_h1, h1_mean, h1_sample = self.sample_h_given_v(v0_sample)
+        pre_sigmoid_v1, v1_mean, v1_sample = self.sample_v_given_h_grbm(h1_sample)
+        return [pre_sigmoid_h1, h1_mean, h1_sample,
+                pre_sigmoid_v1, v1_mean, v1_sample]
 
+    def get_cost_updates(self, lr=0.1, persistent=None, k=1):
+        """This functions implements one step of CD-k or PCD-k
 
-    def gibbs_vhv(self,v0_sample):
-        '''
-        This function implements one step of Gibbs sampling.
-        Staring from the visible state
-        :param v0_sample:
-        :return:
-        '''
-        pre_sigmoid_h1,h1_mean,h1_sample = self.sample_h_given_v(v0_sample)
-        pre_sigmoid_v1,v1_mean,v1_sample = self.sample_v_given_h_grbm(h1_sample)
-        return [pre_sigmoid_v1,v1_mean,v1_sample,pre_sigmoid_h1,h1_mean,h1_sample]
+        :param lr: learning rate used to train the RBM
 
+        :param persistent: None for CD. For PCD, shared variable
+            containing old state of Gibbs chain. This must be a shared
+            variable of size (batch size, number of hidden units).
 
-    def get_cost_updates(self,learning_rate=0.1,persistent=None,k=1):
+        :param k: number of Gibbs steps to do in CD-k/PCD-k
+
+        Returns a proxy for the cost and the updates dictionary. The
+        dictionary contains the update rules for weights and biases but
+        also an update of the shared variable used to store the persistent
+        chain, if one is used.
+
         """
-        This function implements one step of Constrative Divergence K or Presistent Constrative Divergence
-        :param learning_rate: learning rate used to train the Gaussian RBM
-        :param presistent:
-        :param k:
-        :return:
-        """
+
         # compute positive phase
         pre_sigmoid_ph, ph_mean, ph_sample = self.sample_h_given_v(self.input)
+
         # decide how to initialize persistent chain:
         # for CD, we use the newly generate hidden sample
         # for PCD, we initialize from the old state of the chain
@@ -164,9 +214,9 @@ class GRBM(object):
         # determine gradients on RBM parameters
         # not that we only need the sample at the end of the chain
         chain_end = nv_samples[-1]
-
-        cost = T.mean(self.free_energy(self.input)) - T.mean(
-            self.free_energy(chain_end))
+	pdb.set_trace()
+        cost = T.mean(self.free_energy_grbm(self.input)) - T.mean(
+            self.free_energy_grbm(chain_end))
         # We must not compute the gradient through the gibbs sampling
         gparams = T.grad(cost, self.params, consider_constant=[chain_end])
 
@@ -182,7 +232,7 @@ class GRBM(object):
             monitoring_cost = self.get_pseudo_likelihood_cost(updates)
         else:
             # reconstruction cross-entropy is a better proxy for CD
-            monitoring_cost = self.get_reconstruction_cost_grbm(updates,
+            monitoring_cost = self.get_reconstruction_cost(updates,
                                                            pre_sigmoid_nvs[-1])
 
         return monitoring_cost, updates
@@ -197,7 +247,7 @@ class GRBM(object):
         xi = T.round(self.input)
 
         # calculate free energy for the given bit configuration
-        fe_xi = self.free_energy(xi)
+        fe_xi = self.free_energy_grbm(xi)
 
         # flip bit x_i of matrix xi and preserve all other bits x_{\i}
         # Equivalent to xi[:,bit_i_idx] = 1-xi[:, bit_i_idx], but assigns
@@ -205,7 +255,7 @@ class GRBM(object):
         xi_flip = T.set_subtensor(xi[:, bit_i_idx], 1 - xi[:, bit_i_idx])
 
         # calculate free energy with bit flipped
-        fe_xi_flip = self.free_energy(xi_flip)
+        fe_xi_flip = self.free_energy_grbm(xi_flip)
 
         # equivalent to e^(-FE(x_i)) / (e^(-FE(x_i)) + e^(-FE(x_{\i})))
         cost = T.mean(self.n_visible * T.log(T.nnet.sigmoid(fe_xi_flip -
@@ -216,11 +266,27 @@ class GRBM(object):
 
         return cost
 
+    def get_reconstruction_cost_origin(self,updates,pre_sigmoid_nv):
+	cross_entropy = T.mean(
+                T.sum(self.input * T.log(T.nnet.sigmoid(pre_sigmoid_nv)) +
+                #T.sum(self.input * T.log(T.nnet.ultra_fast_sigmoid(pre_sigmoid_nv)) +
+                (1 - self.input) * T.log(1 - T.nnet.sigmoid(pre_sigmoid_nv)),
+                #(1 - self.input) * T.log(1 - T.nnet.ultra_fast_sigmoid(pre_sigmoid_nv)),
+                      axis=1))
 
-    def get_reconstruction_cost_grbm(self,updates,pre_sigmoid_nv):
+        return cross_entropy
+
+    def get_reconstruction_cost(self, updates, pre_sigmoid_nv):
         rms_cost = T.mean(T.sum((self.input -  pre_sigmoid_nv)** 2, axis=1))
         return rms_cost
+    
+    def get_reconstruction_cost_mse(self,updates,pre_sigmoid_nv):
+	mse = T.sum(T.sqr(self.input-T.log(T.nnet.sigmoid(pre_sigmoid_nv))),axis=1)
+	return mse
 
+    def type(self):
+        print 'Gaussian Bernoulli'
+        return
 
 
 def test_grbm(learning_rate=0.1, training_epochs=15,
@@ -228,16 +294,22 @@ def test_grbm(learning_rate=0.1, training_epochs=15,
              n_chains=20, n_samples=10, output_folder='grbm_plots',
              n_hidden=500):
     """
-    Demonstrate how to train and afterwards sample from it using Theano
-    :param learning_rate:  learning rate used for training the RBM
+    Demonstrate how to train and afterwards sample from it using Theano.
+
+    This is demonstrated on MNIST.
+
+    :param learning_rate: learning rate used for training the RBM
+
     :param training_epochs: number of epochs used for training
-    :param dataset: path the pickled dataset
+
+    :param dataset: path the the pickled dataset
+
     :param batch_size: size of a batch used to train the RBM
+
     :param n_chains: number of parallel Gibbs chains to be used for sampling
+
     :param n_samples: number of samples to plot for each chain
-    :param output_folder:
-    :param n_hidden:
-    :return:
+
     """
     datasets = load_data(dataset)
 
@@ -260,22 +332,23 @@ def test_grbm(learning_rate=0.1, training_epochs=15,
                                                  dtype=theano.config.floatX),
                                      borrow=True)
 
+    # construct the GRBM class
     grbm = GRBM(input=x, n_visible=28 * 28,
-              n_hidden=n_hidden, np_rng=rng, theano_rng=theano_rng)
+              n_hidden=n_hidden, numpy_rng=rng, theano_rng=theano_rng)
 
     # get the cost and the gradient corresponding to one step of CD-15
-    cost, updates = grbm.get_cost_updates(learning_rate=learning_rate,
+    cost, updates = grbm.get_cost_updates(lr=learning_rate,
                                          persistent=persistent_chain, k=15)
 
     #################################
-    #     Training the RBM          #
+    #     Training the GRBM          #
     #################################
     if not os.path.isdir(output_folder):
         os.makedirs(output_folder)
     os.chdir(output_folder)
 
     # it is ok for a theano function to have no output
-    # the purpose of train_rbm is solely to update the RBM parameters
+    # the purpose of train_grbm is solely to update the GRBM parameters
     train_grbm = theano.function([index], cost,
            updates=updates,
            givens={x: train_set_x[index * batch_size:
@@ -294,12 +367,12 @@ def test_grbm(learning_rate=0.1, training_epochs=15,
             mean_cost += [train_grbm(batch_index)]
 
         print 'Training epoch %d, cost is ' % epoch, numpy.mean(mean_cost)
-
+	pdb.set_trace()
         # Plot filters after each training epoch
         plotting_start = time.clock()
         # Construct image from the weight matrix
         image = Image.fromarray(tile_raster_images(
-                 X=rbm.W.get_value(borrow=True).T,
+                 X=grbm.W.get_value(borrow=True).T,
                  img_shape=(28, 28), tile_shape=(10, 10),
                  tile_spacing=(1, 1)))
         image.save('filters_at_epoch_%i.png' % epoch)
@@ -313,7 +386,7 @@ def test_grbm(learning_rate=0.1, training_epochs=15,
     print ('Training took %f minutes' % (pretraining_time / 60.))
 
     #################################
-    #     Sampling from the RBM     #
+    #     Sampling from the GRBM     #
     #################################
     # find out the number of test samples
     number_of_test_samples = test_set_x.get_value(borrow=True).shape[0]
@@ -365,5 +438,6 @@ def test_grbm(learning_rate=0.1, training_epochs=15,
     image.save('grbm_samples.png')
     os.chdir('../')
 
-if __name__=='__main__':
+if __name__ == '__main__':
     test_grbm()
+

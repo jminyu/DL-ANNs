@@ -8,6 +8,38 @@ image from a set of samples or weights.
 
 
 import numpy
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+
+def plot_images(filepath,x_coords=None,y_coords=None,x_label=None,y_label=None,title=None):
+    """Data ploating function
+    This function is designed for plotting error value between error value and epoches
+
+    """
+
+    if y_coords is None:
+        print 'Error) Data does not exist'
+        return
+
+    if x_coords is None:
+        x_coords = numpy.arange(0,numpy.shape(y_coords)[0]) 
+
+    if x_label is None:
+        x_label='error value'
+
+    if y_label is None:
+        y_label='epoch'
+
+    if title is None:
+        title='Relation between error and epoch'
+
+    fig = plt.figure()
+    plt.plot(x_coords,y_coords)
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.title(title)
+    plt.grid(True)
+    fig.savefig(filepath)
 
 
 def scale_to_unit_interval(ndar, eps=1e-8):
